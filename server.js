@@ -30,6 +30,19 @@ io.on('connection',s=>{
  s.on('resume',({pin,token},cb)=>{const r=rooms.get(String(pin)),p=r?.players.get(token);if(!p)return cb({error:'Session not found; the server may have restarted'});if(p.socket&&p.socket!==s.id){const old=io.sockets.sockets.get(p.socket);if(old){old.emit('notice',{event:'superseded'});old.disconnect(true);}}p.socket=s.id;s.data={pin:r.pin,token};s.join(r.pin);cb({ok:true,pin:r.pin,token,host:p.host});emitRoom(r);if(r.started&&!r.ended){if(p.question&&!p.question.answered){const v=verbs[p.question.idx];s.emit('question',{spanish:v[0],base:v[1],emoji:v[4],options:p.question.opts,position:p.position,questionNumber:p.seen});}else if(p.question?.answered){s.emit('feedback',p.question.feedback);setTimeout(()=>{if(p.socket===s.id&&!r.ended)draw(p);},3000);}else draw(p);}});
  s.on('start',(_,cb)=>{const r=rooms.get(s.data?.pin);if(!r||r.host!==s.data.token)return cb?.({error:'Only the teacher can start'});if(r.started)return cb?.({error:'Already started'});r.started=true;cb?.({ok:true});emitRoom(r);for(const p of r.players.values())draw(p);});
  s.on('answer',({index},cb)=>{const r=rooms.get(s.data?.pin),p=r?.players.get(s.data?.token);if(!r?.started||r.ended||!p?.question||p.question.answered)return cb?.({error:'Not accepting answers'});if(!Number.isInteger(index)||index<0||index>3)return cb?.({error:'Invalid option'});p.question.answered=true;const correct=p.question.opts[index]===p.question.correct;const before=p.position;p.position=correct?Math.min(100,p.position+1):Math.max(0,p.position-5);p.question.feedback={correct,correctAnswer:p.question.correct,before,position:p.position};cb?.({ok:true});if(p.socket)io.to(p.socket).emit('feedback',p.question.feedback);if(p.position===100){r.ended=true;r.winner=p.name;emitRoom(r);io.to(r.pin).emit('finished',{winner:p.name});return;}emitRoom(r);setTimeout(()=>{if(!r.ended&&p.question?.answered)draw(p);},3000);});
+ s.on('leave',(_,cb)=>{const r=rooms.get(s.data?.pin),p=r?.players.get(s.data?.token);
+  if(!r||!p)return cb?.({error:'You are not in a room'});
+  const wasHost=p.host;
+  r.players.delete(p.token);
+  s.leave(r.pin);
+  s.data={};
+  if(r.players.size===0){rooms.delete(r.pin);cb?.({ok:true});return;}
+  if(wasHost){
+   const next=[...r.players.values()][0];next.host=true;r.host=next.token;
+   if(next.socket)io.to(next.socket).emit('notice',{event:'promoted',message:'The previous teacher left. You now control this room.'});
+  }
+  cb?.({ok:true});emitRoom(r);
+ });
  s.on('disconnect',()=>{const r=rooms.get(s.data?.pin),p=r?.players.get(s.data?.token);if(p&&p.socket===s.id){p.socket=null;emitRoom(r);}});
 });
 server.listen(process.env.PORT||3000,()=>console.log('IRREGULAR RACE listening on',process.env.PORT||3000));
